@@ -17,6 +17,9 @@ from openpyxl.utils import get_column_letter
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_TEMPLATE = REPO_ROOT / "share" / "参数样板.xlsx"
+# 规则库里现有的资料参数执行说明与样例台账放在同一目录。
+# 「用线上文件」只读这里的执行说明，不把该目录当成数据目录。
+REPO_INSTRUCTION_DIR = REPO_ROOT / "share" / "ja-params-sample-001"
 MAX_NEAR_M = 2000
 YELLOW = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 PROJECT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}")
@@ -882,20 +885,54 @@ def read_instruction(path: Path) -> str | None:
     return path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
 
 
-def prepare_cfg(spec: dict, project: str, data_dir: Path) -> dict:
+def normalize_instruction_source(source: str | None) -> str | None:
+    """``online`` 为用线上文件，``local`` 为用本地文件，省略为原查找。"""
+    if source is None or source == "":
+        return None
+    if source in ("online", "local"):
+        return source
+    raise InputError("执行说明来源只能是用线上文件、用本地文件，或省略。")
+
+
+def resolve_instruction_path(name: str, data_dir: Path, source: str | None) -> Path:
+    """返回这一侧要尝试读取的执行说明。文件可以不存在，调用方再决定是否改用内置规则。
+
+    - ``online``：只用规则库 ``share/ja-params-sample-001/`` 里的同名文件
+    - ``local`` 或省略：只用本机必要文件路径。省略时的查找与改来源之前相同
+    """
+    source = normalize_instruction_source(source)
+    if source == "online":
+        return REPO_INSTRUCTION_DIR / name
+    return data_dir / name
+
+
+def prepare_cfg(
+    spec: dict,
+    project: str,
+    data_dir: Path,
+    instruction_source: str | None = None,
+) -> dict:
     cfg = dict(spec)
     stem = spec["stem"]
     cfg["ledger"] = data_dir / spec["ledger_name"]
     cfg["out_name"] = f"{stem}-{project}.xlsx"
     cfg["rep_name"] = f"{stem}-{project}-生成报告.txt"
     cfg["miss_name"] = f"{stem}-{project}-缺测站清单.xlsx"
-    instruction_path = data_dir / spec["instruction_name"]
+    source = normalize_instruction_source(instruction_source)
+    cfg["instruction_source"] = source
+    instruction_path = resolve_instruction_path(spec["instruction_name"], data_dir, source)
+    cfg["instruction_path"] = instruction_path
     text = read_instruction(instruction_path)
     notes = [
         "邻近上限 2000m。互通走廊只认全称。不启用 3km 兜底。",
     ]
     if text:
-        notes.append(f"已读取执行说明: {instruction_path.name}")
+        if source == "online":
+            notes.append(f"已读取执行说明: {instruction_path}（用线上文件）")
+        elif source == "local":
+            notes.append(f"已读取执行说明: {instruction_path.name}（用本地文件）")
+        else:
+            notes.append(f"已读取执行说明: {instruction_path.name}")
         notes.append("工作表名、输出文件名和测站匹配使用内置规则。")
         parsed = parse_def(text)
         builtin = (spec["D"], spec["E"], spec["F"])
@@ -926,6 +963,12 @@ def prepare_cfg(spec: dict, project: str, data_dir: Path) -> dict:
                     )
             else:
                 notes.append("执行说明中未解析出 AD/AE/AF，使用内置 2.2 / 0.1 / 0.01。")
+    elif source == "online":
+        notes.append("规则库没有这份执行说明，未改用本机文件。D/E/F 与常量使用内置规则。")
+    elif source == "local":
+        notes.append(
+            "本机必要文件路径没有执行说明，未改用规则库文件。D/E/F 与常量使用内置规则。"
+        )
     else:
         notes.append("数据目录没有执行说明，D/E/F 与常量使用内置规则。")
     notes.extend(spec["notes"])
@@ -981,9 +1024,16 @@ def _require_sheet(workbook, sheet_name: str, path: Path):
     raise InputError(f"{path.name} 中没有工作表「{sheet_name}」。现有工作表：{names}。")
 
 
-def run_items(items: list[str], project: str, data_dir: Path, template: Path | None = None) -> list[dict]:
+def run_items(
+    items: list[str],
+    project: str,
+    data_dir: Path,
+    template: Path | None = None,
+    instruction_source: str | None = None,
+) -> list[dict]:
     tags = normalize_items(items)
     project = normalize_project(project)
+    instruction_source = normalize_instruction_source(instruction_source)
     data_dir = data_dir.expanduser().resolve()
     if not data_dir.is_dir():
         raise InputError(f"数据目录不存在: {data_dir}")
@@ -1002,6 +1052,12 @@ def run_items(items: list[str], project: str, data_dir: Path, template: Path | N
 
     print(f"数据目录: {data_dir}")
     print(f"参数样板: {template_path}")
+    if instruction_source == "online":
+        print("执行说明: 用线上文件（只读规则库）")
+    elif instruction_source == "local":
+        print("执行说明: 用本地文件（只读本机必要文件路径）")
+    else:
+        print("执行说明: 未指定（本机有同名文件则读取，否则用内置规则）")
     swb = openpyxl.load_workbook(survey_path, read_only=True, data_only=True)
     try:
         traverse = load_points(_require_sheet(swb, "导线点", survey_path), need_xy=True)
@@ -1025,15 +1081,22 @@ def run_items(items: list[str], project: str, data_dir: Path, template: Path | N
         for tag in tags:
             if ITEM_SPECS[tag]["template_sheet"] not in twb.sheetnames:
                 _require_sheet(twb, ITEM_SPECS[tag]["template_sheet"], template_path)
-            cfg = prepare_cfg(ITEM_SPECS[tag], project, data_dir)
+            cfg = prepare_cfg(ITEM_SPECS[tag], project, data_dir, instruction_source)
             summaries.append(build_one(cfg, traverse, levels, twb, corridor_medians, out_dir, project))
     finally:
         twb.close()
 
+    if instruction_source == "online":
+        instruction_line = "执行说明: 用线上文件"
+    elif instruction_source == "local":
+        instruction_line = "执行说明: 用本地文件"
+    else:
+        instruction_line = "执行说明: 未指定（本机有同名文件则读取，否则用内置规则）"
     lines = [
         "交安资料参数生成汇总",
         f"项目编号: {project}",
         f"参数样板: {template_path}",
+        instruction_line,
         f"邻近上限(m): {MAX_NEAR_M}",
         "互通走廊只认全称：白岭互通、石坳互通、港口互通、修水西枢纽、铜鼓枢纽。",
         "有桩号时不超过 2000m；无桩号且有互通全称时用走廊主线 K 中位数，不套 2000m。",
