@@ -8,4 +8,4 @@
 | [JA-002](JA-002-路面标线.md) | 路面标线 | 草稿 |
 | [JA-003](JA-003-波形护栏.md) | 波形护栏 | 草稿 |
 
-本地按编号填表的脚本在仓库 `tools/ja_params/`。样例输入在 `share/ja-params-sample-001/`。参数样板全库只有 `share/参数样板.xlsx` 一份。
+生成参数表时给出三件事：规则库地址或本机已 clone 的仓库、「按编号 JA-001 去执行，项目编号 001」、本机必要文件路径。多个编号用顿号写在同一句里。路径每次单独指定。参数样板全库只有 `share/参数样板.xlsx` 一份。`share/ja-params-sample-001/` 只示范布局。说明见 `tools/ja_params/README.md`。

@@ -26,16 +26,17 @@
 └─ mkdocs.yml
 ```
 
-## 参数生成工具
+## 交安参数
 
-交安 JA-001、JA-002、JA-003 可以在本机按分项编号填参数表。脚本放在规则旁边，方便目录布局相同的项目重跑。规则是否生效，仍看 `docs/分项总表.csv` 里的状态。
+JA-001、JA-002、JA-003 仍是草稿，是否可正式使用看 `docs/分项总表.csv`。要生成参数表时给出三件事：规则库地址（或本机已 clone 的仓库）、一句吩咐、本机必要文件路径。路径每次单独指定，样例目录不是默认位置。
 
 ```text
-pip install -r tools/ja_params/requirements.txt
-python -m tools.ja_params run JA-001 JA-002 JA-003 --project 001 --data-dir share/ja-params-sample-001
+规则库：https://github.com/Elvis20230520/road-drainage-rule-library
+按编号 JA-001 去执行，项目编号 001
+本机必要文件路径：D:\资料\某项目
 ```
 
-参数样板全库只有 `share/参数样板.xlsx`。工具先找数据目录里的同名文件，没有再用这一份。样例目录不放副本。生成的表写在数据目录的 `output/`，不入库。用法见 `tools/ja_params/README.md`。
+多个编号写成「按编号 JA-001、JA-002、JA-003 去执行，项目编号 001」。参数样板全库只有 `share/参数样板.xlsx`，以后只改这一份；指定路径里若有同名文件则先用那一份。该路径下放置台账和 `导线点及水准点.xlsx`，结果写入其中的 `output/`。`share/ja-params-sample-001/` 只示范文件怎么摆。说明见 `tools/ja_params/README.md`。
 
 ## 最简维护流程
 
