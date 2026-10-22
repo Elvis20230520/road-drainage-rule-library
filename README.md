@@ -17,9 +17,25 @@
 ├─ templates/
 │  ├─ 分项规则模板.md
 │  └─ 项目注意事项模板.md
+├─ tools/
+│  └─ ja_params/              按 JA 编号生成本地参数表
+├─ share/
+│  ├─ 参数样板.xlsx           全库唯一参数样板
+│  └─ ja-params-sample-001/   样例输入，不含参数样板，不含生成结果
 ├─ CHANGELOG.md
 └─ mkdocs.yml
 ```
+
+## 参数生成工具
+
+交安 JA-001、JA-002、JA-003 可以在本机按分项编号填参数表。脚本放在规则旁边，方便目录布局相同的项目重跑。规则是否生效，仍看 `docs/分项总表.csv` 里的状态。
+
+```text
+pip install -r tools/ja_params/requirements.txt
+python -m tools.ja_params run JA-001 JA-002 JA-003 --project 001 --data-dir share/ja-params-sample-001
+```
+
+参数样板全库只有 `share/参数样板.xlsx`。工具先找数据目录里的同名文件，没有再用这一份。样例目录不放副本。生成的表写在数据目录的 `output/`，不入库。用法见 `tools/ja_params/README.md`。
 
 ## 最简维护流程
 

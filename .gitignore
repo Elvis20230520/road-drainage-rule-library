@@ -4,3 +4,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# 交安参数工具在数据目录 output/ 下生成的工作簿
+**/output/*.xlsx
+
+# 样例目录的本地生成结果，含报告
+share/ja-params-sample-001/output/
+
