@@ -2,6 +2,7 @@
 """锁池、2km 和参数样板查找的小用例。不依赖样例成果工作簿。"""
 from __future__ import annotations
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from tools.ja_params.builder import (
     compute_zab,
     detect_side,
     extract_corridor,
+    load_ledger_b,
     match_stations,
     parse_def,
     parse_ja002_constants,
@@ -139,6 +141,112 @@ class MatchingTests(unittest.TestCase):
         raw = "标志工程K2+600单柱式标志-江西交通服务热线路线右侧"
         self.assertEqual(clean_b(raw, "标志工程"), "K2+600单柱式标志-江西交通服务热线")
         self.assertEqual(detect_side(raw), ("右幅", ""))
+
+    def test_zuoxian_youxian_suffix_stripped_like_zuoce_youce(self):
+        """词尾「左线」「右线」与「左侧」「右侧」同剥；C 仍为左幅/右幅。"""
+        cases = [
+            ("标志工程K2+600单柱式标志右线", "标志工程", "K2+600单柱式标志", "右幅"),
+            ("标志工程K2+600单柱式标志左线", "标志工程", "K2+600单柱式标志", "左幅"),
+            (
+                "标线工程K0+000~K01+326路侧护栏-轮廓标右线",
+                "标线工程",
+                "K0+000~K01+326路侧护栏-轮廓标",
+                "右幅",
+            ),
+            (
+                "标线工程K0+000~K01+310路侧护栏-轮廓标左线",
+                "标线工程",
+                "K0+000~K01+310路侧护栏-轮廓标",
+                "左幅",
+            ),
+            (
+                "波形护栏工程K01+326~K01+349路侧护栏-路侧波形梁钢护栏右线",
+                "波形护栏工程",
+                "K01+326~K01+349路侧护栏-路侧波形梁钢护栏",
+                "右幅",
+            ),
+            (
+                "波形护栏工程K01+316~K01+339路侧护栏-路侧波形梁钢护栏左线",
+                "波形护栏工程",
+                "K01+316~K01+339路侧护栏-路侧波形梁钢护栏",
+                "左幅",
+            ),
+            # 先有左线/右线、再接左侧/右侧：两侧别都剥掉，C 以左侧/右侧为准。
+            (
+                "标线工程K0+000~K01+326路侧护栏-轮廓标右线右侧",
+                "标线工程",
+                "K0+000~K01+326路侧护栏-轮廓标",
+                "右幅",
+            ),
+            (
+                "标线工程K0+000~K01+326路侧护栏-轮廓标右线左侧",
+                "标线工程",
+                "K0+000~K01+326路侧护栏-轮廓标",
+                "左幅",
+            ),
+            (
+                "标线工程K0+000~K01+310路侧护栏-轮廓标左线右侧",
+                "标线工程",
+                "K0+000~K01+310路侧护栏-轮廓标",
+                "右幅",
+            ),
+            (
+                "标线工程K0+000~K01+310路侧护栏-轮廓标左线左侧",
+                "标线工程",
+                "K0+000~K01+310路侧护栏-轮廓标",
+                "左幅",
+            ),
+            (
+                "波形护栏工程K01+326~K01+349路侧护栏-路侧波形梁钢护栏右线右侧",
+                "波形护栏工程",
+                "K01+326~K01+349路侧护栏-路侧波形梁钢护栏",
+                "右幅",
+            ),
+            (
+                "波形护栏工程K01+316~K01+339路侧护栏-路侧波形梁钢护栏左线左侧",
+                "波形护栏工程",
+                "K01+316~K01+339路侧护栏-路侧波形梁钢护栏",
+                "左幅",
+            ),
+        ]
+        for raw, prefix, expected_b, expected_side in cases:
+            cleaned = clean_b(raw, prefix)
+            self.assertNotIn("左线", cleaned, raw)
+            self.assertNotIn("右线", cleaned, raw)
+            self.assertNotIn("左侧", cleaned, raw)
+            self.assertNotIn("右侧", cleaned, raw)
+            self.assertEqual(cleaned, expected_b, raw)
+            side, _note = detect_side(raw)
+            self.assertEqual(side, expected_side, raw)
+
+        # 方案 A 只剥词尾。中间的「右线/左线」属于构造描述，不整段删掉。
+        mid = "标线工程K51+930主线标线、突起路钮右线-路面标线车道边缘线、车道分界线"
+        mid_b = clean_b(mid, "标线工程")
+        self.assertIn("右线-", mid_b)
+        self.assertEqual(detect_side(mid)[0], "右幅")
+
+    def test_sample_ledgers_strip_line_side_suffix(self):
+        """仓库样例 JA-001/002/003：词尾左线/右线（可再接左侧/右侧）不留在 B。"""
+        sample = REPO_ROOT / "share" / "ja-params-sample-001"
+        tail = re.compile(r"(左线|右线)(左侧|右侧)?$")
+        for tag in ("JA-001", "JA-002", "JA-003"):
+            cfg = ITEM_SPECS[tag]
+            rows = load_ledger_b(sample / cfg["ledger_name"], cfg["ledger_sheet"])
+            matched = [raw for raw in rows if tail.search(raw)]
+            self.assertGreater(len(matched), 0, tag)
+            for raw in matched:
+                cleaned = clean_b(raw, cfg["eng_prefix"])
+                self.assertNotIn("左线", cleaned, raw)
+                self.assertNotIn("右线", cleaned, raw)
+                self.assertNotIn("左侧", cleaned, raw)
+                self.assertNotIn("右侧", cleaned, raw)
+                suffix = tail.search(raw).group(0)
+                if suffix.endswith("右侧") or suffix.endswith("右线"):
+                    expected = "右幅"
+                else:
+                    expected = "左幅"
+                side, _note = detect_side(raw)
+                self.assertEqual(side, expected, raw)
 
     def test_instruction_parser_on_sample(self):
         sample = REPO_ROOT / "share" / "ja-params-sample-001"

@@ -74,6 +74,9 @@ SIDE_STRIP_RES = [
     re.compile(r"两侧$"),
     re.compile(r"右侧$"),
     re.compile(r"左侧$"),
+    # 词尾「右线」「左线」与「右侧」「左侧」同剥，清洗后的 B 不保留左右线字样。
+    re.compile(r"右线$"),
+    re.compile(r"左线$"),
 ]
 
 
