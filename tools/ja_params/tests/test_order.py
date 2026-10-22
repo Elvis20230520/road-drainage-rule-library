@@ -7,7 +7,12 @@ import unittest
 from contextlib import redirect_stdout
 
 from tools.ja_params.cli import main
-from tools.ja_params.order import OrderError, parse_data_dir, parse_order
+from tools.ja_params.order import (
+    OrderError,
+    parse_data_dir,
+    parse_instruction_source,
+    parse_order,
+)
 
 
 class OrderTests(unittest.TestCase):
@@ -76,6 +81,70 @@ class OrderTests(unittest.TestCase):
             2,
         )
         self.assertEqual(main(["run", "JA-001", "--project", "001"]), 2)
+
+    def test_instruction_source_phrase(self):
+        online = "按编号 JA-001 去执行，项目编号 001\n用线上文件"
+        local = "按编号 JA-001 去执行，项目编号 001。用本地文件"
+        self.assertEqual(parse_instruction_source(online), "online")
+        self.assertEqual(parse_instruction_source(local), "local")
+        self.assertEqual(parse_order(online), (["JA-001"], "001"))
+        self.assertIsNone(parse_instruction_source("按编号JA-001去执行，项目编号001"))
+        self.assertIsNone(parse_instruction_source("不用线上文件\n按编号JA-001去执行，项目编号001"))
+        self.assertEqual(
+            parse_instruction_source("不用线上文件。用本地文件"),
+            "local",
+        )
+        quoted = "「用线上文件」\n按编号 JA-003 去执行，项目编号 9"
+        self.assertEqual(parse_instruction_source(quoted), "online")
+
+    def test_both_instruction_sources_rejected(self):
+        text = "按编号 JA-001 去执行，项目编号 001。用线上文件，用本地文件"
+        with self.assertRaises(OrderError):
+            parse_instruction_source(text)
+        self.assertEqual(main(["parse", text]), 2)
+
+    def test_parse_command_includes_instruction_source(self):
+        text = "\n".join(
+            [
+                "按编号 JA-001 去执行，项目编号 001",
+                r"本机必要文件路径：D:\资料\某项目",
+                "用线上文件",
+            ]
+        )
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = main(["parse", text])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            buffer.getvalue().strip(),
+            "JA-001 --project 001 --data-dir D:\\资料\\某项目 --instruction-source online",
+        )
+
+        local_only = "按编号 JA-002 去执行，项目编号 001。用本地文件"
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = main(["parse", local_only])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            buffer.getvalue().strip(),
+            "JA-002 --project 001 --instruction-source local",
+        )
+
+    def test_flag_and_phrase_must_agree(self):
+        self.assertEqual(
+            main(
+                [
+                    "run",
+                    "--order",
+                    "按编号JA-001去执行，项目编号001。用线上文件",
+                    "--data-dir",
+                    r"D:\资料\某项目",
+                    "--instruction-source",
+                    "local",
+                ]
+            ),
+            2,
+        )
 
 
 if __name__ == "__main__":

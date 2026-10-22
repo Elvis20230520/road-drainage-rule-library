@@ -6,11 +6,14 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tools.ja_params.builder import (
     CANONICAL_TEMPLATE,
     ITEM_SPECS,
+    REPO_INSTRUCTION_DIR,
     REPO_ROOT,
+    InputError,
     clean_b,
     compute_zab,
     detect_side,
@@ -21,8 +24,24 @@ from tools.ja_params.builder import (
     parse_ja002_constants,
     pick_ab_ja001,
     pick_ab_ja002,
+    prepare_cfg,
+    resolve_instruction_path,
     resolve_template,
 )
+
+
+def _instruction_with_def(sheet: str, d: str, e: str, f: str) -> str:
+    return (
+        "5，“参数样板”里的“"
+        + sheet
+        + "”D，E，F列分别写上“"
+        + d
+        + "”，“"
+        + e
+        + "”，“"
+        + f
+        + "”\n"
+    )
 
 
 def _point(name, prefix, num, pos, x=1.0, y=2.0, z=3.0):
@@ -259,6 +278,89 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(parse_ja002_constants(text2), (2.2, 0.1, 0.01))
         self.assertEqual(ITEM_SPECS["JA-003"]["template_sheet"], "波形护栏-JA-003")
         self.assertEqual(ITEM_SPECS["JA-003"]["stem"], "波形护栏-JA-003")
+
+    def test_resolve_instruction_path_sticks_to_one_side(self):
+        data_dir = Path("/tmp/project-data")
+        name = "资料参数执行说明-JA-001.md"
+        self.assertEqual(resolve_instruction_path(name, data_dir, None), data_dir / name)
+        self.assertEqual(resolve_instruction_path(name, data_dir, "local"), data_dir / name)
+        online = resolve_instruction_path(name, data_dir, "online")
+        self.assertEqual(online, REPO_INSTRUCTION_DIR / name)
+        self.assertEqual(online.parent, REPO_ROOT / "share" / "ja-params-sample-001")
+        self.assertNotEqual(online.parent, data_dir)
+        with self.assertRaises(InputError):
+            resolve_instruction_path(name, data_dir, "both")
+
+    def test_prepare_cfg_source_does_not_cross_sides(self):
+        """用线上文件不读 data-dir；用本地文件和未指定都不读规则库。"""
+        spec = ITEM_SPECS["JA-001"]
+        name = spec["instruction_name"]
+        local_text = _instruction_with_def(spec["template_sheet"], "本地甲", "本地乙", "本地丙")
+        repo_text = _instruction_with_def(spec["template_sheet"], "线上甲", "线上乙", "线上丙")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "data"
+            repo_dir = root / "repo"
+            data_dir.mkdir()
+            repo_dir.mkdir()
+            (data_dir / name).write_text(local_text, encoding="utf-8")
+            (repo_dir / name).write_text(repo_text, encoding="utf-8")
+
+            with mock.patch("tools.ja_params.builder.REPO_INSTRUCTION_DIR", repo_dir):
+                online = prepare_cfg(spec, "001", data_dir, "online")
+                local = prepare_cfg(spec, "001", data_dir, "local")
+                default = prepare_cfg(spec, "001", data_dir, None)
+                (data_dir / name).unlink()
+                local_missing = prepare_cfg(spec, "001", data_dir, "local")
+                default_missing = prepare_cfg(spec, "001", data_dir, None)
+                (data_dir / name).write_text(local_text, encoding="utf-8")
+                (repo_dir / name).unlink()
+                online_missing = prepare_cfg(spec, "001", data_dir, "online")
+
+            self.assertEqual((online["D"], online["E"], online["F"]), ("线上甲", "线上乙", "线上丙"))
+            self.assertIn("用线上文件", "\n".join(online["notes"]))
+            self.assertNotIn("本地甲", "\n".join(online["notes"]))
+
+            self.assertEqual((local["D"], local["E"], local["F"]), ("本地甲", "本地乙", "本地丙"))
+            self.assertIn("用本地文件", "\n".join(local["notes"]))
+            self.assertNotIn("线上甲", "\n".join(local["notes"]))
+
+            self.assertEqual((default["D"], default["E"], default["F"]), ("本地甲", "本地乙", "本地丙"))
+            self.assertIn("已读取执行说明: " + name, "\n".join(default["notes"]))
+            self.assertNotIn("用线上文件", "\n".join(default["notes"]))
+            self.assertNotIn("用本地文件", "\n".join(default["notes"]))
+
+            builtin = (spec["D"], spec["E"], spec["F"])
+            self.assertEqual((local_missing["D"], local_missing["E"], local_missing["F"]), builtin)
+            self.assertIn("未改用规则库文件", "\n".join(local_missing["notes"]))
+            self.assertNotIn("线上甲", "\n".join(local_missing["notes"]))
+
+            self.assertEqual(
+                (default_missing["D"], default_missing["E"], default_missing["F"]),
+                builtin,
+            )
+            self.assertIn(
+                "数据目录没有执行说明，D/E/F 与常量使用内置规则。",
+                default_missing["notes"],
+            )
+            self.assertNotIn("线上甲", "\n".join(default_missing["notes"]))
+
+            # 规则库没有这份说明、本机有另一份时，仍不改读本机文件。
+            self.assertEqual(
+                (online_missing["D"], online_missing["E"], online_missing["F"]),
+                builtin,
+            )
+            self.assertIn("未改用本机文件", "\n".join(online_missing["notes"]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            (data_dir / name).write_text(local_text, encoding="utf-8")
+            live = prepare_cfg(spec, "001", data_dir, "online")
+        self.assertEqual(REPO_INSTRUCTION_DIR, REPO_ROOT / "share" / "ja-params-sample-001")
+        self.assertTrue((REPO_INSTRUCTION_DIR / name).is_file())
+        self.assertEqual((live["D"], live["E"], live["F"]), ("交安工程", "交通标志", "交通标志"))
+        self.assertIn("用线上文件", "\n".join(live["notes"]))
+        self.assertNotIn("本地甲", "\n".join(live["notes"]))
 
     def test_template_lookup_uses_data_dir_then_share(self):
         self.assertTrue(CANONICAL_TEMPLATE.is_file())
